@@ -39,7 +39,7 @@ To identify biological pathways enriched with significant DNA methylation differ
 
 | File and folder                                              | Description      |
 | ------------------------------------------------------------ | ---------------- |
-| [code/04_pathway_analysis/pathway.Rmd](https://github.com/TransBioInfoLab/DNAm-and-RI/blob/main/04_pathway_analysis/pathway.Rmd) | Pathway analysis |
+| [code/04_pathway_analysis/pathway.Rmd](https://github.com/TransBioInfoLab/DNAm-and-RI/blob/main/code/04_pathway_analysis/pathway.Rmd) | Pathway analysis |
 
 ### 4. Integrative analyses with gene expression, genetic variants, and brain-to-blood correlations
 
@@ -65,7 +65,7 @@ To assess disease progression, we performed out-of-sample validation on the ADNI
 
 ## For reproducible research
 
-To perform the analysis, begin by installing the packages found in `00_utility/session_info.R` ([Link to the script](https://github.com/TransBioInfoLab/DNAm-and_RI/blob/main/code/00_utility/session_info.R)). Then, load the auxiliary functions in the rest of the R scripts from the `00_utility` folder ([Link to the folder](https://github.com/TransBioInfoLab/DNAm-and_RI/blob/main/code/00_utility)). Follow the sequence provided in the Description to conduct the analysis.
+To perform the analysis, begin by installing the packages found in `00_utility/session_info.R` ([Link to the script](https://github.com/TransBioInfoLab/DNAm-and-RI/blob/main/code/00_utility/session_info.R)). Then, load the auxiliary functions in the rest of the R scripts from the `00_utility` folder ([Link to the folder](https://github.com/TransBioInfoLab/DNAm-and-RI/blob/main/code/00_utility)). Follow the sequence provided in the Description to conduct the analysis.
 
 ## Acknowledgement
 
