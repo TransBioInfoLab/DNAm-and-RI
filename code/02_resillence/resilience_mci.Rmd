@@ -1,0 +1,218 @@
+---
+title: "DNA Methylation Signature of a Lifestyle-based Resilience Index for Cognitive Health"
+subtitle: "Single CpG test with resilience index ---- MCI samples"
+author: 
+  - Wei Zhang^[University of Miami]
+  - Lily Wang^[University of Miami]
+date: "`r Sys.Date()`"
+output:
+  rmarkdown::html_document:
+    highlight: pygments
+    theme: yeti
+    toc: true
+    number_sections: true
+    df_print: paged
+    code_download: false
+    toc_float:
+      collapsed: yes
+    toc_depth: 3
+editor_options:
+  chunk_output_type: inline   
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, eval = T)
+dir_base <- "~/TBL Dropbox/Wei Zhang/AD_CR_HBI_pilot"
+dir_data <- file.path(dir_base, "data")
+dir_results <- file.path(dir_base, "analysis_results")
+dir_results_res <- file.path(dir_results, "resilience_mci")
+dir.data.aux <- file.path(dir_base,"../DATASETS/Aux_Sync/") 
+for(p in grep("dir",ls(),value = T)) dir.create(get(p),recursive = TRUE,showWarnings = FALSE)
+```
+
+# Load data and packages
+
+```{r message = F, eval = T}
+library(tidyverse)
+library(doParallel)
+library(SummarizedExperiment)
+library(janitor)
+library(bacon)
+```
+
+```{r message = F, eval = F}
+# DNAm data
+se <- readRDS(
+  file.path(dir_data, "summarized_experiment.RDS")
+) 
+
+pheno <- read_csv(
+  file.path(dir_data, "HBI_data/ECR_clinical_MRS_June_no_outliers_with_cell_pc.csv")
+)
+pheno$res_t <- as.numeric(scale(pheno$res_t))
+pheno$Race_Ethnicity <- factor(pheno$Race_Ethnicity)
+pheno$dis_global <- factor(pheno$dis_global)
+# Beta matrix
+beta <- assay(se)
+```
+
+# Auxilary function
+
+```{r functions, eval = T}
+source("../utility/cpg_test.R")
+```
+
+```{r, eval = F}
+pheno <- pheno %>% filter(dis_global == 3)
+beta <- beta[,pheno$sample]
+```
+
+# Analysis -- RLM
+
+```{r fit_model, eval = F}
+results <- lm_test(
+      beta = beta,
+      pheno = pheno,
+      test_var = "res_t",
+      as_response = T,
+      covariates = c("CurrentAge", "sex_predicted", "Cell_PC1", "Cell_PC2", 
+                 "ApoE_Status"),
+      prefix = "Resilience_rlm",
+      scale = F,
+      robust = T,
+      cores = 30,
+      save = T,
+      dir.save = dir_results_res
+    )
+```
+
+## Add annotation
+
+```{r}
+anno_df2 <- readxl::read_xlsx(
+  file.path(dir_data, "Supp/EPICv2_anno.xlsx"),
+  skip = 1
+)
+```
+
+```{r}
+results <- read_csv(
+  file.path(dir_results_res, "Resilience_rlm_model_results.csv")
+)
+```
+
+```{r add_anno, message = F, eval = F}
+library(IlluminaHumanMethylationEPICv2anno.20a1.hg38)
+anno <- minfi::getAnnotation(IlluminaHumanMethylationEPICv2anno.20a1.hg38)
+anno_gr <- GenomicRanges::makeGRangesFromDataFrame(
+  anno, start.field = "pos", end.field = "pos", keep.extra.columns = TRUE
+)
+anno_df <- as.data.frame(anno_gr)
+anno_df <-  anno_df %>% 
+  mutate(cpg = gsub("_.*", "",anno_df$Name)) %>%
+  dplyr::select(cpg, seqnames, start, end, width, 
+                Relation_to_Island) %>%
+  unique()
+
+anno_df2 <- anno_df2 %>% 
+  dplyr::mutate(cpg = gsub("_.*", "", ProbeID)) %>%
+  dplyr::select(cpg, geneNames, RelationToGene, distToTSS) %>% 
+  unique() 
+# Remove duplicates in cpgs without gene annotation
+dup_cpgs <- anno_df2$cpg[duplicated(anno_df2$cpg)]
+dup_cpgs_df <- anno_df2[anno_df2$cpg %in% dup_cpgs,] %>% 
+  na.omit() %>%
+  group_by(cpg) %>%
+  dplyr::summarise(geneNames = paste(geneNames, collapse = ";"),
+                   RelationToGene = paste(RelationToGene, collapse = ";"),
+                   distToTSS = paste(distToTSS, collapse = ";"))
+anno_df2 <- anno_df2 %>% filter(!cpg  %in% dup_cpgs)
+anno_df2 <- rbind(anno_df2, dup_cpgs_df)
+  
+anno_df <- left_join(anno_df, 
+                     anno_df2)
+
+results_anno <- left_join(
+  results,
+  anno_df
+)
+```
+
+```{r, eval = T}
+load(file.path(dir.data.aux,
+               "great_EPICv2_array_annotation.rda"))
+```
+
+```{r, eval = F}
+results_anno <- left_join(
+  results_anno,
+  great %>% dplyr::select(cpg, GREAT_annotation)
+)
+```
+
+```{r, eval = F}
+write_csv(
+  results_anno,
+  file.path(dir_results_res, "Resilience_rlm_model_results_annotated.csv")
+)
+```
+
+## Bacon correction
+
+```{r eval = T, echo = F}
+results_anno <- read_csv(
+  file.path(dir_results_res, "Resilience_rlm_model_results_annotated.csv"),
+  show_col_type = F
+)
+```
+
+```{r bacon, eval = T}
+results_bacon <- bacon_adj(results_anno,
+                           est_var = "value",
+                           z_var = "t_value",
+                           std_var = "std_error")
+```
+
+```{r, eval = T}
+write_csv(
+  results_bacon$data.with.inflation,
+  file.path(dir_results_res, "Resilience_rlm_model_results_bacon.csv")
+)
+
+writexl::write_xlsx(
+  results_bacon$inflation.stat,
+  file.path(dir_results_res, "Resilience_rlm_model_bacon_stats.xlsx")
+)
+```
+
+```{r}
+results_all <- read_csv(
+  file.path(dir_results_res, "../resilience/Resilience_rlm_model_results_bacon.csv")
+)
+results_mci <- results_bacon$data.with.inflation
+```
+
+```{r}
+results_all_sig <- results_all %>%
+  filter(pValue.bacon < 1e-05) %>%
+  arrange(pValue.bacon)
+```
+
+```{r}
+results_mci_filtered <- results_mci[match(results_all_sig$cpg, results_mci$cpg),]
+write_csv(
+  results_mci_filtered,
+  file.path(dir_results_res, "Resilience_sig_all_results.csv")
+)
+```
+
+
+# Session Information
+
+<details>
+  <summary>**Session Info**</summary>
+```{r session}
+sessionInfo()
+```
+</details>
+

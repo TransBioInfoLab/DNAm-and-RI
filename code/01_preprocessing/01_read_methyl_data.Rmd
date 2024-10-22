@@ -1,0 +1,159 @@
+---
+title: "DNA Methylation Signature of a Lifestyle-based Resilience Index for Cognitive Health"
+subtitle: "Read in raw DNA methylation data and create a summarized experiment for pre-processing"
+author:
+  - David Lukacsovich^[University of Miami]
+  - Lily Wang^[University of Miami]
+date: "`r format(Sys.time(), '%d %B %Y')`"
+output:
+  rmarkdown::html_document:
+    highlight: breezedark
+    theme: lumen
+    toc: true
+    number_sections: true
+    df_print: paged
+    code_download: false
+    toc_float:
+      collapsed: yes
+    toc_depth: 3
+editor_options:
+  chunk_output_type: inline    
+---
+
+```{r setup}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE)
+```
+
+# Set Up
+
+## Load Libraries
+
+```{r}
+suppressMessages({
+  library(dplyr)
+  library(readxl)
+  library(minfi)
+  library(SummarizedExperiment)
+  library(BiocGenerics)
+  library(stringr)  
+})
+
+base_dir <- "~/TBL Dropbox/David Lukacsovich"
+data_dir <- file.path(
+  base_dir, "DATASET/HBI/DNAm/lWang_dOShea/lWang_dOShea/EPIC128_112023"
+)
+idat_dir <- file.path(data_dir, "Raw Data")
+report_dir <- file.path(data_dir, "Data Reports")
+pheno_dir <- file.path(base_dir, "DATASET/HBI/Phenotype")
+save_dir <- file.path(base_dir, "AD_CR_HBI_pilot")
+```
+
+## Read in Methylation Data
+
+```{r}
+RGSet <- minfi::read.metharray.exp(
+  base = idat_dir,
+  recursive = TRUE,
+  verbose = FALSE,
+  force = TRUE)
+BiocGenerics::annotation(RGSet)["array"] = "IlluminaHumanMethylationEPICv2"
+BiocGenerics::annotation(RGSet)["annotation"] = "20a1.hg38"
+```
+ 
+## Add Phenotype Information
+
+```{r}
+pheno_df <- readxl::read_excel(
+  file.path(pheno_dir, "HIHG_ GTCore_SSF_EPIC128-updated_11-7-2023.xlsx"),
+  sheet = "SampleManifest") %>%
+  data.frame()
+ref_df <- read.table(
+  file.path(report_dir, "FinalReport_SamplesTable.txt"),
+  header = TRUE,
+  sep = "\t",
+  skip = 8) %>%
+  dplyr::mutate(labels = paste0(.data$Sentrix.Barcode, "_", .data$Sample.Section)) %>%
+  dplyr::select("Sample.ID", "labels")
+
+ref_df <- ref_df[match(colnames(RGSet), ref_df$labels),]
+pheno_df <- pheno_df[match(ref_df$Sample.ID, pheno_df$HIHG.SAMPLE.ID),]
+
+pheno_df <- pheno_df %>%
+  dplyr::mutate(
+    sample = stringr::str_replace(.data$HIHG.SAMPLE.ID, "-", "_")) %>%
+  dplyr::rename(
+    sex = "Gender",
+    DNA_Quality = "DNA.Quality..EQ.or.DIN.score.") %>%
+  dplyr::mutate(sex = ifelse(.data$sex == "1", "MALE", .data$sex)) %>%
+  dplyr::mutate(sex = ifelse(.data$sex == "2", "FEMALE", .data$sex)) %>%
+  dplyr::mutate(sex = ifelse(.data$sex == "NA", NA, .data$sex)) %>%
+  dplyr::select(
+    -"Submitted.by",
+    -"NOTES",
+    -"Beadchip.ID",
+    -"Beadchip.number",
+    -"Beadchip.Position",
+    -"X96.well.plate.position.of.sample.to.be.loaded.in.beadchip")
+row.names(pheno_df) <- pheno_df$sample
+colnames(RGSet) <- pheno_df$sample
+```
+
+## Preliminary Filter
+
+Some probes are missing from the EPICv2 Manifest. We remove those here to maintain consistency in the code
+
+```{r}
+# load manifest
+annotType <- IlluminaHumanMethylationEPICv2anno.20a1.hg38::Manifest
+probes <- row.names(annotType)
+
+# get missing probes
+all_probes <- RGSet %>%
+  minfi::getBeta() %>%
+  row.names()
+
+missing_probes <- all_probes[!(all_probes %in% probes)]
+missing_index <- (1:length(all_probes))[!(all_probes %in% probes)]
+
+# remove missing probes
+RGSet <- minfi::subsetByLoci(
+  RGSet,
+  excludeLoci = missing_probes,
+  keepControls = TRUE,
+  keepSnps = TRUE
+)
+```
+
+## Create Summarized Experiment
+
+```{r}
+rowData <- data.frame(
+  probes = row.names(RGSet),
+  array = "EPIC.v2",
+  genome = "hg38"
+)
+row.names(rowData) <- rowData$probes
+
+row.names(pheno_df) <- pheno_df$sample
+dnam_data <- SummarizedExperiment::SummarizedExperiment(
+  assays = list("DNAm" = RGSet),
+  rowData = rowData,
+  metadata = list("genome" = "EPIC.v2", "array" = "hg38"),
+  colData = as.data.frame(pheno_df)
+)
+```
+
+# Save Data
+
+```{r}
+saveRDS(dnam_data, file = file.path(save_dir, "data", "full_data.RDS"))
+```
+
+# Session Information
+
+<details>
+  <summary>**Session Info**</summary>
+```{r}
+sessionInfo()
+```
+</details>

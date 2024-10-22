@@ -1,0 +1,100 @@
+---
+title: "DNA Methylation Signature of a Lifestyle-based Resilience Index for Cognitive Health"
+subtitle: "Pathway analysis"
+author: 
+  - Wei Zhang^[University of Miami]
+  - Lily Wang^[University of Miami]
+date: "`r Sys.Date()`"
+output:
+  rmarkdown::html_document:
+    highlight: pygments
+    theme: yeti
+    toc: true
+    number_sections: true
+    df_print: paged
+    code_download: false
+    toc_float:
+      collapsed: yes
+    toc_depth: 3
+editor_options:
+  chunk_output_type: inline   
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = F)
+dir_base <- "~/TBL Dropbox/Wei Zhang/AD_CR_HBI_pilot"
+dir_data <- file.path(dir_base, "data")
+dir_results <- file.path(dir_base, "analysis_results")
+dir_results_res <- file.path(dir_results, "resilience")
+dir.data.aux <- file.path(dir_base,"../DATASETS/Aux_Sync/") 
+dir.results.pathway <- file.path(dir_results, "pathway")
+for(p in grep("dir",ls(),value = T)) dir.create(get(p),recursive = TRUE,showWarnings = FALSE)
+```
+
+# Load auxilary function
+
+```{r message = F, eval = T}
+source(file.path(dir_base, "code/utility/pathway_fn.R"))
+library(tidyverse)
+library(IlluminaHumanMethylationEPICanno.ilm10b4.hg19)
+```
+
+# Load results
+
+```{r message = F}
+## Load meta results
+results <- read_csv(
+  file.path(dir_results_res,
+            "Resilience_rlm_model_results_bacon.csv"),
+  show_col_types = F
+)
+```
+
+```{r}
+# Create annotation
+anno_df <- results %>%
+  mutate(
+    UCSC_RefGene_Name = str_split(results$UCSC_RefGene_Name, ";") %>% purrr::map(~.[1]) %>% unlist(),
+    UCSC_RefGene_Group = str_split(results$UCSC_RefGene_Group, ";") %>% purrr::map(~.[1]) %>% unlist()
+  ) %>%
+  dplyr::select(cpg, UCSC_RefGene_Name, UCSC_RefGene_Group) %>%
+  data.frame()
+cpg_list <- results %>% pull(pValue.bacon, name = cpg)
+```
+
+## Pathway analysis
+
+```{r eval = F}
+results_pathway <- methylGSA_wrapper(
+  cpg.pval = cpg_list,
+  anno_df = anno_df,
+  array = "EPICv2",
+  method = "GSEA",
+  use_msigdbr = T,
+  GS = c("C2:KEGG","C2:Reactome","H","C5:BP"),
+  minsize = 2,
+  maxsize = 200
+)
+
+names(results_pathway) <- gsub(":","_",names(results_pathway))
+writexl::write_xlsx(
+  results_pathway %>% purrr::map("results"),
+  file.path(dir.results.pathway, "methylGSA_pathway_analysis_GSEA_msigdbr_KEGG_Reactome_H_C5BP_range_2_200_results_EPICv2.xlsx")
+)
+
+saveRDS(
+  results_pathway,
+  file.path(dir.results.pathway, "methylGSA_pathway_analysis_GSEA_msigdbr_KEGG_Reactome_H_C5BP_range_2_200_results_EPICv2.rds")
+)
+```
+
+# Session Information
+
+<details>
+
+<summary>**Session Info**</summary>
+
+```{r session}
+sessionInfo()
+```
+
+</details>

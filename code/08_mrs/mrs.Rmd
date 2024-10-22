@@ -1,0 +1,197 @@
+---
+title: "DNA Methylation Signature of a Lifestyle-based Resilience Index for Cognitive Health"
+subtitle: "MRS analysis"
+author: 
+  - Wei Zhang^[University of Miami]
+  - Lily Wang^[University of Miami]
+date: "`r Sys.Date()`"
+output:
+  rmarkdown::html_document:
+    highlight: pygments
+    theme: yeti
+    toc: true
+    number_sections: true
+    df_print: paged
+    code_download: false
+    toc_float:
+      collapsed: yes
+    toc_depth: 3
+editor_options:
+  chunk_output_type: inline   
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+dir_base <- "~/TBL Dropbox/Wei Zhang/AD_CR_HBI_pilot"
+dir_data <- file.path(dir_base, "data")
+dir_results <- file.path(dir_base, "analysis_results")
+dir_results_mrs <- file.path(dir_results, "mrs")
+dir.results.res <- file.path(dir_results, "resilience")
+dir.results.combp <- file.path(dir_results, "combp")
+dir.data.aux <- file.path(dir_base,"../DATASETS/Aux_Sync/") 
+dir_data_all <- file.path(dir_base, "../DATASETS")
+for(p in grep("dir",ls(),value = T)) dir.create(get(p),recursive = TRUE,showWarnings = FALSE)
+```
+
+# Load Data
+
+```{r message = F, eval = T}
+library(tidyverse)
+library(doParallel)
+library(SummarizedExperiment)
+library(janitor)
+library(bacon)
+library(survival)
+library(lmerTest)
+library(glmnet)
+library(foreach)
+```
+
+## ADNI
+
+```{r}
+adni.se <- readRDS(
+  file.path(dir_data_all, "ADNI/DNAm/pca_filtering/all_sample/ADNI_all_sample_cn_mci_baseline_surv.rds")
+)
+```
+
+## HBI
+
+```{r message = F, warning = F}
+se <- readRDS(
+  file.path(dir_data, "summarized_experiment.RDS")
+)
+# Beta matrix
+beta_train <- assay(se)
+pheno <- read_csv(
+  file.path(dir_data, "HBI_data/ECR_clinical_MRS_June_no_outliers_with_cell_pc.csv"),
+  show_col_types = F
+)
+#pheno$res_t <- as.numeric(scale(pheno$res_t))
+beta_train <- beta_train[,gsub("-", "_", pheno$HIHG.SAMPLE.ID)[pheno$rack_split == 1]]
+M_train <- minfi::logit2(beta_train)
+```
+
+```{r}
+rm(se)
+gc()
+```
+
+```{r}
+# Load results
+results <- read_csv(
+  file.path(dir.results.res,
+            "Resilience_rlm_model_results_bacon.csv")
+) %>% dplyr::select(
+  cpg, seqnames, start, end, width, GREAT_annotation, Estimate.bacon, pValue.bacon
+)
+
+## Sig single cpgs
+cpgs.sig <- results %>% filter(pValue.bacon < 1e-05) 
+
+## Load comb-p DMR results
+sig.dmr <- read_csv(
+  file.path(dir.results.combp, "combp_resilience_rlm_filtered_results_annotated.csv")
+) 
+sig.dmr <- str_split(sig.dmr$cpgs_in_region, ",") %>% unlist() ## 134
+sig.dmr <- results %>% filter(cpg %in% sig.dmr) 
+```
+
+```{r}
+# Limit to common cpgs in EPIC
+common_cpgs <- intersect(c(cpgs.sig$cpg, sig.dmr$cpg) %>% unique, rownames(adni.se))
+```
+
+<details>
+<summary>Auxilary function</summary>
+```{r}
+source("../utility/mrs.R")
+```
+</details>
+
+# MRS analysis
+
+## Survival analysis with elastic net
+
+### Fit model to HBI 
+
+```{r}
+model <- fit_glmnet(
+      cpgs = common_cpgs,
+      beta = M_train,
+      y = pheno$res_t, 
+      k = 5, 
+      standardize = F
+    )
+```
+
+a = 0.1 achieve the best results
+
+```{r}
+saveRDS(model, file.path(dir_results_mrs, "MRS_elastic_net_model.rds"))
+```
+
+```{r}
+model <- readRDS(file.path(dir_results_mrs, "MRS_elastic_net_model.rds"))
+```
+
+### Apply to ADNI
+
+```{r}
+pheno_df <- colData(adni.se) %>%
+  data.frame()
+
+# Keep MCI and CN at the last visit
+pheno_df$status <- ifelse((pheno_df$DX == "CN" & pheno_df$DX2 %in% c("MCI", "Dementia"))|
+                          (pheno_df$DX == "MCI" & pheno_df$DX2 %in% c("Dementia")), 1, 0)
+beta <- assay(adni.se)
+M <- minfi::logit2(beta)
+mrs <- get_MRS(model$coeff[-1], M) 
+```
+
+```{r}
+# CN + MCI
+pheno_df$MRS <- mrs$MRS + model$coeff[1]
+pheno_df$DX <- factor(pheno_df$DX, levels = c("CN", "MCI"))
+pheno_df <- pheno_df %>% filter(SurvDays > 0)
+pheno_df$APOE4 <- factor(ifelse(pheno_df$APOE4 == 0, 0, ifelse(pheno_df$APOE4 %in% c(1,2), 1, NA)))
+mod1 <- coxph(
+  Surv(SurvDays, status) ~ MRS + age_at_visit + PTGENDER + APOE4 + DX + MMSE_bl + PTEDUCAT,
+  data = pheno_df
+)
+summary(mod1)
+```
+
+### KM plot
+
+```{r}
+pheno_df <- pheno_df %>% filter(SurvDays > 0 & SurvDays/365 <= 11.5)
+pheno_df$SurvYears <- pheno_df$SurvDays/365
+qt <- quantile(pheno_df$MRS, probs = seq(0,1,1/3))
+pheno_df$group <- ifelse(pheno_df$MRS < qt[2], "Low", ifelse (
+  pheno_df$MRS > qt[3], "High", "Median"
+))
+pheno_sub <- pheno_df %>% filter(group %in% c("Low", "High"))
+pdf(file = file.path(dir_results_mrs, "KM_plot_ADNI_11_5yr.pdf"),
+    width = 10,
+    height = 8)
+print(KM_plot(test_var = pheno_sub$group, time_var = "SurvYears",
+        event_var = "status", pheno_mat = pheno_sub, conf.int = F,
+        xlab = "Time (years)", risk.table.pos = "out", ylab = "Survival rate (%)",
+        title = "Kaplan-Meier Survival Curve for Low and High Resilience Groups", 
+        xlim = c(0,11.5), 
+        break.x = 2, tables.theme = theme_cleantable(), 
+        surv.scale = "percent",legend.title = " ",
+        legend.labs = c("High Resilience","Low Resilience"),
+        font.legend = 14,
+        palette = "lancet", break.y = 0.2, tables.height = 0.15,tables.y.text = FALSE),
+      newpage = F)
+dev.off()
+```
+
+# Session information
+
+```{r}
+devtools::session_info()
+```
+
