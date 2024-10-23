@@ -1,6 +1,6 @@
 ---
-title: "DNA Methylation Signature of a Lifestyle-based Resilience Index for Cognitive Health"
-subtitle: "Run line by line preprocessing of DNA methylation data"
+title: "Run line by line preprocessing of DNA methylation data"
+subtitle: "Preprocess DNA methylation data"
 author:
   - David Lukacsovich^[University of Miami]
   - Lily Wang^[University of Miami]
@@ -46,7 +46,6 @@ suppressMessages({
 
 base_dir <- "~/TBL Dropbox/David Lukacsovich"
 save_dir <- file.path(base_dir, "AD_CR_HBI_pilot")
-probe_dir <- file.path(save_dir, "data", "Epigenetic_clocksOLD")
 dnam_dir <- file.path(base_dir, "software_DNAmTools/DNAmTools/R")
 ```
 
@@ -59,80 +58,6 @@ qc_get_v2_names <- function(probes) {
   }
   
   sapply(strsplit(probes, "_"), `[`, 1, USE.NAMES = FALSE)
-}
-
-qc_fix_beta <- function(
-    dnam_data, na_threshold_probe = 0.3, na_threshold_sample = 10000
-) {
-  if (inherits(dnam_data, "SummarizedExperiment")) {
-    return(
-      qc_fix_summary_beta(
-        dnam_data,
-        na_threshold_probe = na_threshold_probe,
-        na_threshold_sample = na_threshold_sample
-      )
-    )
-  } else {
-    return(
-      qc_fix_assay_beta(
-        dnam_data,
-        na_threshold_probe = na_threshold_probe,
-        na_threshold_sample = na_threshold_sample
-      )
-    )
-  }
-}
-
-qc_fix_summary_beta <- function(
-    summarized_data, na_threshold_probe = 0.3, na_threshold_sample = 10000
-) {
-  fixed_result <- qc_fix_assay_beta(
-    summarized_data,
-    na_threshold_probe = na_threshold_probe,
-    na_threshold_sample = na_threshold_sample
-  )
-  
-  fixed_data <- fixed_result$imputed_data
-  na_stats <- fixed_result$na_stats
-
-  to_keep <- colnames(assay_data) %in% colnames(fixed_data)
-  summarized_data <- summarized_data[,to_keep]
-
-  if (inherits(assay_data, "RGChannelSet")) {
-    probes <- row.names(assay_data)
-    to_remove <- probes[!(probes %in% row.names(fixed_data))]
-    assay_data <- minfi::subsetByLoci(
-      assay_data,
-      excludeLoci = to_remove,
-      keepControls = TRUE,
-      keepSnps = TRUE
-    )
-    to_keep <- row.names(summarized_data) %in% row.names(assay_data)
-    summarized_data <- summarized_data[to_keep, ]
-  } else if (inherits(assay_data, "MethylSet")) {
-    to_keep <- row.names(summarized_data) %in% row.names(fixed_data)
-    summarized_data <- summarized_data[to_keep, ]
-  } else {
-    metadata <- S4Vectors::metadata(summarized_data)
-    pheno_df <- data.frame(SummarizedExperiment::colData(summarized_data))
-    
-    rowData <- data.frame(
-      probes = row.names(fixed_data),
-      array = metadata$array,
-      genome = metadata$genome
-    )
-    row.names(rowData) <- rowData$probes
-    
-    row.names(pheno_df) <- pheno_df$sample
-    summarized_data <- SummarizedExperiment::SummarizedExperiment(
-      assays = list("DNAm" = fixed_data),
-      rowData = rowData,
-      metadata = metadata,
-      colData = pheno_df
-    )
-  }
-
-  list(summarized_data = summarized_data, na_stats = na_stats)
 }
 
 convert_data_to_beta <- function(assay_data) {
@@ -186,58 +111,12 @@ get_data_dimensions <- function(
   
   data_stats
 }
-
-qc_fix_assay_beta <- function(
-    assay_data, na_threshold_probe = 0.3, na_threshold_sample = 10000,
-    seed = 23
-) {
-  assay_data <- convert_data_to_beta(assay_data)
-  na_stats <- get_na_stats(assay_data, na_threshold_probe, na_threshold_sample)
-
-  # filter samples and probes
-  sample_counts <- colSums(is.na(assay_data))
-  assay_data <- assay_data[, sample_counts < na_threshold_sample]
-  probe_rates <- rowMeans(is.na(assay_data))
-  assay_data <- assay_data[probe_rates < na_threshold_probe, ]
-
-  # impute data
-  if (sum(is.na(assay_data)) > 0) {
-    sink("/dev/null")
-    set.seed(seed)
-    imputed_data <- impute::impute.knn(assay_data, maxp = 10000)
-    sink()
-    assay_data <- imputed_data$data
-  }
-
-  list(
-    imputed_data = assay_data,
-    na_stats = na_stats
-  )
-}
-
-get_probe_counts <- function(df_probes, label = "") {
-  counts <- c(table(df_probes$Source))
-  counts$Total <- sum(counts)
-  counts <- data.frame(c(step = label, counts))
-  
-  counts
-}
 ```
 
 ## Read in Data
 
 ```{r read_data}
 dnam_data <- readRDS(file.path(save_dir, "data", "full_data.RDS"))
-df_probes <- read.csv(file.path(probe_dir, "datMiniAnnotation4_fixed (1).csv")) %>%
-  dplyr::mutate(
-    Source = ifelse(
-      stringr::str_starts(.data$Source, "Control"),
-      "Control",
-      .data$Source
-    )
-  ) %>%
-  dplyr::select("Name", "Source") %>%
-  dplyr::distinct()
 ```
 
 ## Set Seed
@@ -257,8 +136,6 @@ qc_summary_df <- data.frame(
   unique_probes = "",
   R_package = ""
 )
-
-qc_epigenetic_df <- get_probe_counts(df_probes, label = "All Probes")
 ```
 
 ## Get Starting Parameters
@@ -271,21 +148,6 @@ qc_summary_df[1, "samples"] <- assay_dimensions$samples
 qc_summary_df[1, "probes"] <- assay_dimensions$probes
 qc_summary_df[1, "unique_probes"] <- assay_dimensions$unique_probes
 qc_summary_df[1, "R_package"] <- ""
-
-# track epigenetic counts
-assay_data <- SummarizedExperiment::assays(dnam_data)$DNAm
-probes <- assay_data %>%
-  minfi::getBeta() %>%
-  row.names() %>%
-  qc_get_v2_names()
-
-df_probes <- df_probes %>%
-  dplyr::filter(.data$Name %in% probes)
-
-qc_epigenetic_df <- rbind(
-  qc_epigenetic_df,
-  get_probe_counts(df_probes, label = "Present in EPICv2")
-)
 ```
 
 # Perform QC Filtering
@@ -342,14 +204,6 @@ dnam_data <- SummarizedExperiment::SummarizedExperiment(
 )
 
 # record progress
-df_probes <- df_probes %>%
-  dplyr::filter(.data$Name %in% qc_get_v2_names(row.names(assay_data)))
-
-qc_epigenetic_df <- rbind(
-  qc_epigenetic_df,
-  get_probe_counts(df_probes, label = "Passed Detection P")
-)
-
 assay_dimensions <- get_data_dimensions(dnam_data)
 qc_summary_df[3, "step"] <- "select probes with detection P < 0.01 for 100% of samples"
 qc_summary_df[3, "samples"] <- assay_dimensions$samples
@@ -388,14 +242,6 @@ probe_names <- SummarizedExperiment::assays(dnam_data)$DNAm %>%
 dnam_data <- dnam_data[!(probe_names %in% snp_probes), ]
 
 # record progress
-df_probes <- df_probes %>%
-  dplyr::filter(.data$Name %in% qc_get_v2_names(row.names(dnam_data)))
-
-qc_epigenetic_df <- rbind(
-  qc_epigenetic_df,
-  get_probe_counts(df_probes, label = "Filted by SNP proximity and cross-hybridization")
-)
-
 assay_dimensions <- get_data_dimensions(dnam_data)
 qc_summary_df[5, "step"] <- "filtered out probes by SNP proximity and cross hybridization"
 qc_summary_df[5, "samples"] <- assay_dimensions$samples
@@ -405,49 +251,6 @@ qc_summary_df[5, "R_package"] <- ""
 ```
 
 # Normalize Data
-
-## Missing Values
-
-```{r impute_1, echo = FALSE}
-# impute beta values
-fixed_data <- qc_fix_beta(dnam_data, na_threshold_probe = 0.3, na_threshold_sample = 10000)
-dnam_data <- fixed_data$summarized_data
-na_stats <- fixed_data$na_stats
-
-# record progress
-df_probes <- df_probes %>%
-  dplyr::filter(.data$Name %in% qc_get_v2_names(row.names(dnam_data)))
-
-qc_epigenetic_df <- rbind(
-  qc_epigenetic_df,
-  get_probe_counts(df_probes, label = "Filtered and Imputed Missing")
-)
-
-assay_dimensions <- get_data_dimensions(dnam_data)
-qc_summary_df[6, "step"] <- "Filtered and imputed missing values"
-qc_summary_df[6, "samples"] <- assay_dimensions$samples
-qc_summary_df[6, "probes"] <- assay_dimensions$probes
-qc_summary_df[6, "unique_probes"] <- assay_dimensions$unique_probes
-qc_summary_df[6, "R_package"] <- "impute::impute.knn(maxp = 10000)"
-
-# print missing stats
-df_missing <- data.frame(
-  metrics = c(
-    "Probes with NA values",
-    "Probes with > 30% NA values",
-    "Samples with NA values",
-    "Samples with > 10,000 NA vlaues"
-  ),
-  counts = c(
-    na_stats$na_probes,
-    na_stats$filter_probes,
-    na_stats$na_samples,
-    na_stats$filter_samples
-  )
-)
-
-df_missing
-```
 
 ## Split XY and Other Probes
 
@@ -547,11 +350,11 @@ colnames(assay_data) <- dnam_data$sample
 
 # record progress
 assay_dimensions <- get_data_dimensions(rbind(assay_data, assay_xy))
-qc_summary_df[7, "step"] <- "Normalized Data"
-qc_summary_df[7, "samples"] <- assay_dimensions$samples
-qc_summary_df[7, "probes"] <- assay_dimensions$probes
-qc_summary_df[7, "unique_probes"] <- assay_dimensions$unique_probes
-qc_summary_df[7, "R_package"] <- paste0(
+qc_summary_df[6, "step"] <- "Normalized Data"
+qc_summary_df[6, "samples"] <- assay_dimensions$samples
+qc_summary_df[6, "probes"] <- assay_dimensions$probes
+qc_summary_df[6, "unique_probes"] <- assay_dimensions$unique_probes
+qc_summary_df[6, "R_package"] <- paste0(
   "lumi::lumiN(method = 'quantile')",
   " ; ",
   "wateRmelon::BMIQ(plots = FALSE, pri = FALSE, nfit = 50000)"
@@ -569,51 +372,6 @@ df_density <- assay_data[,1:9] %>%
 ggplot2::ggplot(df_density, mapping = ggplot2::aes(x = beta, color = probe_type)) +
   ggplot2::geom_density() +
   ggplot2::facet_wrap(~sample)
-```
-
-## Missing Values
-
-```{r impute_2, echo = FALSE}
-# impute beta values
-fixed_data <- qc_fix_beta(assay_data, na_threshold_probe = 0.3, na_threshold_sample = 10000)
-assay_data <- fixed_data$imputed_data
-na_stats <- fixed_data$na_stats
-
-assay_xy <- assay_xy[,colnames(assay_data)]
-
-# record progress
-df_probes <- df_probes %>%
-  dplyr::filter(.data$Name %in% qc_get_v2_names(c(row.names(assay_data), row.names(assay_xy))))
-
-qc_epigenetic_df <- rbind(
-  qc_epigenetic_df,
-  get_probe_counts(df_probes, label = "Filtered and Imputed Missing after Normalization")
-)
-
-assay_dimensions <- get_data_dimensions(rbind(assay_data, assay_xy))
-qc_summary_df[8, "step"] <- "Filtered and imputed missing values"
-qc_summary_df[8, "samples"] <- assay_dimensions$samples
-qc_summary_df[8, "probes"] <- assay_dimensions$probes
-qc_summary_df[8, "unique_probes"] <- assay_dimensions$unique_probes
-qc_summary_df[8, "R_package"] <- "impute::impute.knn(maxp = 10000)"
-
-# print missing stats
-df_missing <- data.frame(
-  metrics = c(
-    "Probes with NA values",
-    "Probes with > 30% NA values",
-    "Samples with NA values",
-    "Samples with > 10,000 NA vlaues"
-  ),
-  counts = c(
-    na_stats$na_probes,
-    na_stats$filter_probes,
-    na_stats$na_samples,
-    na_stats$filter_samples
-  )
-)
-
-df_missing
 ```
 
 ## Fix Probe Names
@@ -652,11 +410,11 @@ dnam_data <- SummarizedExperiment::SummarizedExperiment(
 )
 
 # record progress
-qc_summary_df[9, "step"] <- "Merge duplicate probe names"
-qc_summary_df[9, "samples"] <- ncol(dnam_data)
-qc_summary_df[9, "probes"] <- nrow(dnam_data)
-qc_summary_df[9, "unique_probes"] <- nrow(dnam_data)
-qc_summary_df[9, "R_package"] <- "limma::avereps"
+qc_summary_df[7, "step"] <- "Merge duplicate probe names"
+qc_summary_df[7, "samples"] <- ncol(dnam_data)
+qc_summary_df[7, "probes"] <- nrow(dnam_data)
+qc_summary_df[7, "unique_probes"] <- nrow(dnam_data)
+qc_summary_df[7, "R_package"] <- "limma::avereps"
 ```
 
 ## Correlation Violin Plots
@@ -728,11 +486,11 @@ row.names(pheno_df) <- pheno_df$sample
 SummarizedExperiment::colData(dnam_data) <- pheno_df
 
 # record progress
-qc_summary_df[10, "step"] <- "Predict cell type proportions"
-qc_summary_df[10, "samples"] <- ncol(dnam_data)
-qc_summary_df[10, "probes"] <- nrow(dnam_data)
-qc_summary_df[10, "unique_probes"] <- nrow(dnam_data)
-qc_summary_df[10, "R_package"] <- "EpiDISH::epidish(ref.m = EpiDISH::centDHSbloodDMC.m, method = 'RPC')"
+qc_summary_df[8, "step"] <- "Predict cell type proportions"
+qc_summary_df[8, "samples"] <- ncol(dnam_data)
+qc_summary_df[8, "probes"] <- nrow(dnam_data)
+qc_summary_df[8, "unique_probes"] <- nrow(dnam_data)
+qc_summary_df[8, "R_package"] <- "EpiDISH::epidish(ref.m = EpiDISH::centDHSbloodDMC.m, method = 'RPC')"
 ```
 
 ## Predict Sex
@@ -753,11 +511,11 @@ dnam_data$sex_predicted <- ifelse(
 )
 
 # Record Progress
-qc_summary_df[11, "step"] <- "predict sample sex"
-qc_summary_df[11, "samples"] <- ncol(dnam_data)
-qc_summary_df[11, "probes"] <- nrow(dnam_data)
-qc_summary_df[11, "unique_probes"] <- nrow(dnam_data)
-qc_summary_df[11, "R_package"] <- package <- "wateRmelon::estimateSex"
+qc_summary_df[9, "step"] <- "predict sample sex"
+qc_summary_df[9, "samples"] <- ncol(dnam_data)
+qc_summary_df[9, "probes"] <- nrow(dnam_data)
+qc_summary_df[9, "unique_probes"] <- nrow(dnam_data)
+qc_summary_df[9, "R_package"] <- package <- "wateRmelon::estimateSex"
 ```
 
 ## PCA
@@ -840,11 +598,11 @@ dnam_data <- dnam_data[,!dnam_data$is_outlier]
 ### Record Progress
 
 ```{r pca_progress}
-qc_summary_df[12, "step"] <- "identify samples within 3 standard deviations from mean of PC1 or PC2 as outliers"
-qc_summary_df[12, "samples"] <- ncol(dnam_data)
-qc_summary_df[12, "probes"] <- nrow(dnam_data)
-qc_summary_df[12, "unique_probes"] <- nrow(dnam_data)
-qc_summary_df[12, "R_package"] <- "stats::prcomp (center = TRUE, scale = TRUE)"
+qc_summary_df[10, "step"] <- "identify samples within 3 standard deviations from mean of PC1 or PC2 as outliers"
+qc_summary_df[10, "samples"] <- ncol(dnam_data)
+qc_summary_df[10, "probes"] <- nrow(dnam_data)
+qc_summary_df[10, "unique_probes"] <- nrow(dnam_data)
+qc_summary_df[10, "R_package"] <- "stats::prcomp (center = TRUE, scale = TRUE)"
 ```
 
 # Display Results
@@ -898,26 +656,6 @@ p <- ggplot2::ggplot(
 p
 ```
 
-## Show Epigenetic Probes Table
-
-```{r show_df_1, echo=FALSE}
-qc_epigenetic_df %>%
-  DT::datatable(
-    filter = 'top',
-    style = "bootstrap",
-    extensions = 'Buttons',
-    options = list(
-      scrollX = TRUE, 
-      dom = 'Bfrtip',
-      buttons = I('colvis'),
-      keys = TRUE, 
-      pageLength = 10
-    ), 
-    rownames = FALSE,
-    caption = "Epigenetic Probe Counts"
-  )
-```
-
 ## Show Probes and Samples at Each Step
 
 ```{r show_df_2, echo=FALSE}
@@ -968,11 +706,6 @@ write.csv(
 write.csv(
   qc_summary_df,
   file = file.path(save_dir, "analysis_results", "filtered_steps.csv"),
-  row.names = FALSE
-)
-write.csv(
-  qc_epigenetic_df,
-  file = file.path(save_dir, "analysis_results", "epigenetic_probes.csv"),
   row.names = FALSE
 )
 ggplot2::ggsave(
