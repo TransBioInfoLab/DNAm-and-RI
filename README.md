@@ -13,7 +13,7 @@ The DNA methylation samples from HBI study were measured using the Illumina Infi
 | File and folder                                              | Description                        |
 | ------------------------------------------------------------ | ---------------------------------- |
 | [code/01_preprocessing/01_read_methyl_data.Rmd](https://github.com/TransBioInfoLab/DNAm-and-RI/blob/main/code/01_preprocessing/01_read_methyl_data.Rmd) | Reading DNA methylation data       |
-| [code/01_preprocessing/02_preprocess_methyl_data.Rmd](https://github.com/TransBioInfoLab/DNAm-and-RI/blob/main/code/01_preprocessing/02_preprocess_methyl_data.Rmd) | Preprocessing DNA methylation data |
+| [code/01_preprocessing/02_preprocess.Rmd](https://github.com/TransBioInfoLab/DNAm-and-RI/blob/main/code/01_preprocessing/02_preprocess.Rmd) | Preprocessing DNA methylation data |
 
 The preprocessing of DNAm samples from the ADNI study can be found in the repository ([Link](https://github.com/TransBioInfoLab/blood-dnam-and-incident-dementia)) of our previous study[^1].
 
